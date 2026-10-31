@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>uTopia AIS</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { margin-bottom: .2rem; }
+  h2 { margin-top: 2.5rem; border-bottom: 2px solid #222; padding-bottom: .3rem; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0; align-items: center; }
+  input, select { padding: .4rem; border: 1px solid #ccc; border-radius: 4px; }
+  button { padding: .45rem .9rem; border: 0; border-radius: 4px; background: #1a1a1a; color: #fff; cursor: pointer; }
+  button:hover { background: #333; }
+  table { width: 100%; border-collapse: collapse; margin-top: .6rem; font-size: .92rem; }
+  th, td { text-align: left; border-bottom: 1px solid #eee; padding: .4rem .5rem; }
+  th { color: #555; font-weight: 600; }
+  .msg { font-size: .85rem; color: #0a6b2d; min-height: 1.2em; }
+  .err { color: #b00020; }
+  .tie { font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>uTopia AIS</h1>
+<p>Prototype dashboard for the billing / collections / electronic payments / ledger core.</p>
+
+<h2>Owners &amp; properties</h2>
+<div class="row">
+  <input id="o-name" placeholder="Owner name">
+  <input id="o-email" placeholder="Email (optional)">
+  <button onclick="createOwner()">Add owner</button>
+  <span id="o-msg" class="msg"></span>
+</div>
+<div class="row">
+  <input id="p-owner" type="number" placeholder="Owner ID">
+  <input id="p-assoc" placeholder="Association">
+  <input id="p-addr" placeholder="Address">
+  <input id="p-rate" type="number" placeholder="Rate 150-200">
+  <button onclick="createProperty()">Add property</button>
+  <span id="p-msg" class="msg"></span>
+</div>
+<table id="properties-table"><thead><tr><th>ID</th><th>Owner</th><th>Association</th><th>Address</th><th>Rate</th><th>Open balance</th></tr></thead><tbody></tbody></table>
+
+<h2>Billing</h2>
+<div class="row">
+  <input id="b-period" placeholder="Period YYYY-MM">
+  <button onclick="runBilling()">Run billing</button>
+  <button onclick="applyLateFees()">Apply late fees (20%)</button>
+  <span id="b-msg" class="msg"></span>
+</div>
+<table id="invoices-table"><thead><tr><th>ID</th><th>Property</th><th>Period</th><th>Charge</th><th>Late fee</th><th>Balance due</th><th>Due</th><th>Status</th></tr></thead><tbody></tbody></table>
+
+<h2>Collections</h2>
+<div class="row">
+  <input id="pay-prop" type="number" placeholder="Property ID">
+  <input id="pay-amt" type="number" placeholder="Amount">
+  <select id="pay-method"><option>electronic</option><option>mail</option><option>in-office</option></select>
+  <button onclick="takePayment()">Record payment</button>
+  <span id="pay-msg" class="msg"></span>
+</div>
+
+<h2>Electronic payments</h2>
+<div class="row">
+  <input id="v-name" placeholder="Vendor name">
+  <input id="v-bank" placeholder="Bank ref">
+  <button onclick="createVendor()">Add vendor</button>
+  <span id="v-msg" class="msg"></span>
+</div>
+<div class="row">
+  <input id="vi-vendor" type="number" placeholder="Vendor ID">
+  <input id="vi-number" placeholder="Invoice number">
+  <input id="vi-amount" type="number" placeholder="Amount">
+  <button onclick="createVendorInvoice()">Add vendor invoice</button>
+  <span id="vi-msg" class="msg"></span>
+</div>
+<table id="vendor-invoices-table"><thead><tr><th>ID</th><th>Vendor</th><th>Number</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+
+<h2>Ledger</h2>
+<button onclick="loadLedger()">Refresh trial balance</button>
+<table id="ledger-table"><thead><tr><th>Account</th><th>Debit</th><th>Credit</th></tr></thead><tbody></tbody></table>
+<p id="tie" class="tie"></p>
+
+<script>
+const $ = id => document.getElementById(id);
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) { opts.headers["content-type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+function say(id, text, isErr) { const el = $(id); el.textContent = text; el.className = "msg" + (isErr ? " err" : ""); }
+
+async function createOwner() {
+  try {
+    const o = await api("POST", "/owners", { name: $("o-name").value, email: $("o-email").value || null });
+    say("o-msg", `owner #${o.id} created`); $("o-name").value = ""; $("o-email").value = "";
+  } catch (e) { say("o-msg", e.message, true); }
+}
+
+async function createProperty() {
+  try {
+    const p = await api("POST", "/properties", {
+      owner_id: Number($("p-owner").value), association: $("p-assoc").value,
+      address: $("p-addr").value, rate: Number($("p-rate").value),
+    });
+    say("p-msg", `property #${p.id} created`); loadProperties();
+  } catch (e) { say("p-msg", e.message, true); }
+}
+
+async function loadProperties() {
+  const [props, aging] = await Promise.all([api("GET", "/properties"), api("GET", "/reports/aging")]);
+  const body = props.map(p => `<tr><td>${p.id}</td><td>${p.owner_id}</td><td>${p.association}</td><td>${p.address}</td><td>$${p.rate}</td><td>$${(aging[p.id] || 0).toFixed(2)}</td></tr>`).join("");
+  $("properties-table").querySelector("tbody").innerHTML = body;
+}
+
+async function runBilling() {
+  try {
+    const period = $("b-period").value;
+    const created = await api("POST", `/billing/run?period=${encodeURIComponent(period)}`);
+    say("b-msg", `${created.length} invoice(s) created for ${period}`); loadInvoices(); loadProperties(); loadLedger();
+  } catch (e) { say("b-msg", e.message, true); }
+}
+
+async function applyLateFees() {
+  try {
+    const period = $("b-period").value;
+    const flagged = await api("POST", `/billing/late-fees?period=${encodeURIComponent(period)}`);
+    say("b-msg", `late fee applied to ${flagged.length} invoice(s)`); loadInvoices(); loadProperties(); loadLedger();
+  } catch (e) { say("b-msg", e.message, true); }
+}
+
+async function loadInvoices() {
+  const invs = await api("GET", "/invoices");
+  const body = invs.map(i => `<tr><td>${i.id}</td><td>${i.property_id}</td><td>${i.period}</td><td>$${i.charge}</td><td>$${i.late_fee}</td><td>$${i.balance_due.toFixed(2)}</td><td>${i.due_date}</td><td>${i.status}</td></tr>`).join("");
+  $("invoices-table").querySelector("tbody").innerHTML = body;
+}
+
+async function takePayment() {
+  try {
+    const prop = $("pay-prop").value, amt = $("pay-amt").value, method = $("pay-method").value;
+    await api("POST", `/payments?property_id=${prop}&amount=${amt}&method=${method}`);
+    say("pay-msg", "payment recorded"); loadInvoices(); loadProperties(); loadLedger();
+  } catch (e) { say("pay-msg", e.message, true); }
+}
+
+async function createVendor() {
+  try {
+    const v = await api("POST", "/vendors", { name: $("v-name").value, bank_ref: $("v-bank").value });
+    say("v-msg", `vendor #${v.id} created`); $("v-name").value = ""; $("v-bank").value = "";
+  } catch (e) { say("v-msg", e.message, true); }
+}
+
+async function createVendorInvoice() {
+  try {
+    await api("POST", "/vendor-invoices", {
+      vendor_id: Number($("vi-vendor").value), number: $("vi-number").value, amount: Number($("vi-amount").value),
+    });
+    say("vi-msg", "vendor invoice recorded"); loadVendorInvoices(); loadLedger();
+  } catch (e) { say("vi-msg", e.message, true); }
+}
+
+async function payVendorInvoice(id) {
+  try { await api("POST", `/vendor-payments?vendor_invoice_id=${id}`); loadVendorInvoices(); loadLedger(); }
+  catch (e) { alert(e.message); }
+}
+
+async function loadVendorInvoices() {
+  const vis = await api("GET", "/vendor-invoices");
+  const body = vis.map(v => `<tr><td>${v.id}</td><td>${v.vendor_id}</td><td>${v.number}</td><td>$${v.amount}</td><td>${v.status}</td><td>${v.status === "open" ? `<button onclick="payVendorInvoice(${v.id})">Pay</button>` : ""}</td></tr>`).join("");
+  $("vendor-invoices-table").querySelector("tbody").innerHTML = body;
+}
+
+async function loadLedger() {
+  const tb = await api("GET", "/ledger/trial-balance");
+  let totalD = 0, totalC = 0;
+  const rows = Object.entries(tb).map(([acct, v]) => { totalD += v.debit; totalC += v.credit; return `<tr><td>${acct}</td><td>$${v.debit.toFixed(2)}</td><td>$${v.credit.toFixed(2)}</td></tr>`; }).join("");
+  $("ledger-table").querySelector("tbody").innerHTML = rows;
+  $("tie").textContent = `Total debits $${totalD.toFixed(2)} / total credits $${totalC.toFixed(2)}: ${totalD === totalC ? "ties out" : "OUT OF BALANCE"}`;
+}
+
+loadProperties(); loadInvoices(); loadVendorInvoices(); loadLedger();
+</script>
+</body>
+</html>
