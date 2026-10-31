@@ -40,12 +40,22 @@ def create_owner(owner: Owner, session: Session = Depends(get_session)):
     return owner
 
 
+@app.get("/owners")
+def list_owners(session: Session = Depends(get_session)):
+    return session.exec(select(Owner)).all()
+
+
 @app.post("/properties")
 def create_property(prop: Property, session: Session = Depends(get_session)):
     if not (150 <= prop.rate <= 200):
         raise HTTPException(400, "rate must be between 150 and 200")
     session.add(prop); session.commit(); session.refresh(prop)
     return prop
+
+
+@app.get("/properties")
+def list_properties(session: Session = Depends(get_session)):
+    return session.exec(select(Property)).all()
 
 
 # ---- billing -----------------------------------------------------------
@@ -150,6 +160,16 @@ def create_vendor(vendor: Vendor, session: Session = Depends(get_session)):
     return vendor
 
 
+@app.get("/vendors")
+def list_vendors(session: Session = Depends(get_session)):
+    return session.exec(select(Vendor)).all()
+
+
+@app.get("/vendor-invoices")
+def list_vendor_invoices(session: Session = Depends(get_session)):
+    return session.exec(select(VendorInvoice)).all()
+
+
 @app.post("/vendor-invoices")
 def create_vendor_invoice(vi: VendorInvoice, session: Session = Depends(get_session)):
     dup = session.exec(select(VendorInvoice).where(VendorInvoice.vendor_id == vi.vendor_id,
@@ -191,3 +211,10 @@ def trial_balance(session: Session = Depends(get_session)):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ---- UI (static) -----------------------------------------------------------
+# Mounted last so it never shadows an API route above.
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+app.mount("/", StaticFiles(directory=Path(__file__).parent.parent / "static", html=True), name="ui")
