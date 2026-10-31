@@ -9,7 +9,7 @@ from .db import get_session, init_db
 from .models import (Invoice, LedgerEntry, Owner, Payment, Property, Vendor,
                       VendorInvoice, VendorPayment)
 
-app = FastAPI(title="uTopia AIS prototype")
+app = FastAPI(title="uTopia AIS prototype....by: Alex Osterneck, CLA, MSCS, MSIT")
 
 
 @app.on_event("startup")
